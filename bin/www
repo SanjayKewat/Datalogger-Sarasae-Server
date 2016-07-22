@@ -1,0 +1,176 @@
+#!/usr/bin/env node
+
+/**
+ * Module dependencies.
+ */
+
+var app = require('../app');
+var debug = require('debug')('rest-api:server');
+var http = require('http').Server(app);
+var io = require('socket.io')(http);
+var fs = require('fs'),
+    mysql = require('mysql'),
+    connectionsArray = [],
+    POLLING_INTERVAL = 1000,
+    pollingTimer;
+
+/**
+ * Get port from environment and store in Express.
+ */
+
+var port = normalizePort(process.env.PORT || '3000');
+app.set('port', port);
+
+/**
+ * Create HTTP server.
+ */
+
+//var server = http.createServer(app);
+
+/**
+ * Listen on provided port, on all network interfaces.
+ */
+
+
+/*
+ * REAL TIME SOCKET PART START HERE
+ *
+ * HERE IT IS THE COOL PART
+ * This function loops on itself since there are sockets connected to the page
+ * sending the result of the database query after a constant interval
+ *
+ */
+
+var current_poll=function(){
+
+    var currt_query = connection.query('SELECT * FROM matlab_currnt where id=1'),//reading value for current data.
+        current_data = []; // array to store alarm data
+
+    // setting the query listeners
+    currt_query
+        .on('error', function (err) {
+            // Handle error, and 'end' event will be emitted after this as well
+            console.log('Error while reading Current table data : '+err);
+            current_sockets(err);
+        })
+        .on('result', function (c_data) {
+            // it fills our array looping on each user row inside the db
+            current_data.push(c_data);
+        })
+        .on('end', function () {
+            // loop on itself only if there are sockets still connected
+            if (connectionsArray.length) {
+                pollingTimer = setTimeout(current_poll, POLLING_INTERVAL);
+
+                current_sockets({
+                    curr_data: current_data
+                });
+            }
+        });
+};
+
+// creating a new websocket to keep the content updated without any AJAX request
+io.on('connection', function(socket) {
+
+    console.log('Number of connections:' + connectionsArray.length);
+    // starting the loop only if at least there is one user connected
+    if (!connectionsArray.length) {
+        current_poll();
+    }
+
+    socket.on('disconnect', function() {
+        var socketIndex = connectionsArray.indexOf(socket);
+        console.log('socket = ' + socketIndex + ' disconnected');
+        if (socketIndex >= 0) {
+            connectionsArray.splice(socketIndex, 1);
+        }
+    });
+
+
+    setTimeout(function(){
+        socket.send("Hello World");
+    }, 1000);
+
+    console.log('A new socket is connected!');
+    connectionsArray.push(socket);
+
+});
+
+
+var current_sockets = function(data) {
+    // adding the time of the last update
+    data.time = new Date();
+    // sending new data to all the sockets connected
+    connectionsArray.forEach(function(tmpSocket) {
+        tmpSocket.volatile.emit('current_data', data);
+    });
+};
+
+
+// REAL TIME SOCKET PART  ending  here
+
+http.listen(port);
+http.on('error', onError);
+http.on('listening', onListening);
+
+
+/**
+ * Normalize a port into a number, string, or false.
+ */
+
+function normalizePort(val) {
+  var port = parseInt(val, 10);
+
+  if (isNaN(port)) {
+    // named pipe
+    return val;
+  }
+
+  if (port >= 0) {
+    // port number
+    return port;
+  }
+
+  return false;
+}
+
+/**
+ * Event listener for HTTP server "error" event.
+ */
+
+function onError(error) {
+  if (error.syscall !== 'listen') {
+    throw error;
+  }
+
+  var bind = typeof port === 'string'
+    ? 'Pipe ' + port
+    : 'Port ' + port;
+
+  // handle specific listen errors with friendly messages
+  switch (error.code) {
+    case 'EACCES':
+      console.error(bind + ' requires elevated privileges');
+      process.exit(1);
+      break;
+    case 'EADDRINUSE':
+      console.error(bind + ' is already in use');
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+}
+
+/**
+ * Event listener for HTTP server "listening" event.
+ */
+
+function onListening() {
+  var addr = http.address();
+  var bind = typeof addr === 'string'
+    ? 'pipe ' + addr
+    : 'port ' + addr.port;
+  debug('Listening on ' + bind);
+    console.log(' Express server listening on port '+app.get('port'));
+}
